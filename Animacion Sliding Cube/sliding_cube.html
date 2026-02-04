@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <script src="https://aframe.io/releases/1.0.0/aframe.min.js"></script>
+        <title>Sliding Cube</title>
+    </head>
+    <body>
+        <a-scene>
+            <!-- Set the background -->
+            <a-sky color="lightblue"></a-sky>   
+         
+         
+            <!-- Set the floor -->
+            <a-plane position="0 0 0" height="100" 
+                    width="100" rotation="-90 0 0"
+                    color="black">
+            </a-plane>
+            
+            <!-- Animated box that slides along the floor, once -->
+            <a-box position="-8 1.5 -10" color="blue"
+                    height="3" width="3" depth="1"
+                    animation="
+                    property: position;
+                    from: -8 1.5 -10;
+                    to: 8 1.5 -10;
+                    "
+            ></a-box>
+        </a-scene>
+    </body>
+</html>
