@@ -6,23 +6,41 @@
     </head>
     <body>
         <a-scene>
-            <!-- Set the background -->
             <a-sky color="lightblue"></a-sky>   
-         
-         
-            <!-- Set the floor -->
+            <a-camera>
+                <a-cursor fuse="true" fuse-time="1000"></a-cursor>
+            </a-camera>
+            
             <a-plane position="0 0 0" height="100" 
                     width="100" rotation="-90 0 0"
                     color="black">
             </a-plane>
+
+            <!-- Animacion Greco -->
+            <a-box
+                position="0 1 -5"
+                depth="2"
+                height="2"
+                width="2"
+                animation="
+                    property: rotation;
+                    from: 0 0 0;
+                    to: 0 360 0;
+                    dur: 5000;
+                    loop: false;
+                    startEvents: click;
+                "
+                color="green">
+            </a-box>
             
-            <!-- Animated box that slides along the floor, once -->
+            <!-- Animacion Gary -->
             <a-box position="-8 1.5 -10" color="blue"
                     height="3" width="3" depth="1"
                     animation="
                     property: position;
                     from: -8 1.5 -10;
                     to: 8 1.5 -10;
+                    startEvents: click;
                     "
             ></a-box>
         </a-scene>
