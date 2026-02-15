@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Lanzaguisantes</title>
+    <meta name="description" content="Recreación del Peashooter de Plants vs Zombies">
+    <script src="https://aframe.io/releases/1.0.0/aframe.min.js"></script>
+</head>
+<body>
+    <a-scene background="color: #87CEEB">
+        <a-entity position="0 1.6 4">
+            <a-camera look-controls wasd-controls="acceleration:100; fly:true"></a-camera>
+        </a-entity>
+
+        <a-light type="ambient" color="#fff" intensity="0.6"></a-light>
+        <a-light type="directional" color="#fff" intensity="0.8" position="2 4 3"></a-light>
+        <a-light type="point" color="#fff" intensity="0.5" position="-2 2 2"></a-light>
+
+        <!-- PEASHOOTER -->
+        <a-entity id="peashooter" position="0 1.2 0">
+            
+            <!-- CABEZA -->
+            <a-entity id="cabeza" position="0 1 0">
+                <!-- Cabeza principal verde -->
+                <a-sphere 
+                    radius="0.5" 
+                    color="#A4D65E"
+                    shadow="cast: true">
+                </a-sphere>
+                
+                <!-- Trompita/Cañón -->
+                <a-cylinder 
+                    position="0 0 0.58" 
+                    radius="0.2" 
+                    height="0.2"
+                    rotation="90 0 0"
+                    color="#6B9E3E">
+                </a-cylinder>
+                
+                <!-- Boca/Cañón - anillo exterior verde oscuro -->
+                <a-torus 
+                    position="0 0 0.69" 
+                    radius="0.2" 
+                    radius-tubular="0.04"
+                    color="#507A2E">
+                </a-torus>
+                
+                <!-- Boca/Cañón - centro oscuro -->
+                <a-circle 
+                    position="0 0 0.71" 
+                    radius="0.17" 
+                    color="#2A4019">
+                </a-circle>
+                
+                <!-- Interior del cañón -->
+                <a-torus 
+                    position="0 0 0.7" 
+                    radius="0.11" 
+                    radius-tubular="0.02"
+                    color="#1A2A10">
+                </a-torus>
+                
+                <!-- Punto negro lateral izquierdo -->
+                <a-sphere 
+                    position="-0.45 0 0.2" 
+                    radius="0.04" 
+                    color="#000000">
+                </a-sphere>
+                
+                <!-- Punto negro lateral derecho -->
+                <a-sphere 
+                    position="0.45 0 0.2" 
+                    radius="0.04" 
+                    color="#000000">
+                </a-sphere>
+                
+                <!-- Hoja superior -->
+                <a-entity position="0 0.5 -0.1" rotation="0 0 -20">
+                    <a-cone 
+                        radius-bottom="0.15" 
+                        radius-top="0.02" 
+                        height="0.4"
+                        color="#6B9E3E"
+                        rotation="0 0 0">
+                    </a-cone>
+                </a-entity>
+                
+                <!-- Detalle de vena en hoja superior -->
+                <a-entity position="0 0.5 -0.08" rotation="0 0 -20">
+                    <a-cylinder 
+                        radius="0.01" 
+                        height="0.35"
+                        color="#507A2E">
+                    </a-cylinder>
+                </a-entity>
+                
+                <!-- Tallo trasero de la cabeza -->
+                <a-cylinder 
+                    position="0 0.15 -0.45" 
+                    radius="0.05" 
+                    height="0.2"
+                    color="#6B9E3E"
+                    rotation="-25 0 0">
+                </a-cylinder>
+            </a-entity>
+            
+            <!-- TALLO -->
+            <a-cylinder 
+                position="0 0.5 0" 
+                radius="0.08" 
+                height="1"
+                color="#6B9E3E"
+                shadow="cast: true">
+            </a-cylinder>
+            
+            <!-- HOJAS BASE -->
+            <!-- Hoja izquierda -->
+            <a-entity position="-0.2 0.15 0" rotation="0 0 -50">
+                <a-sphere 
+                    radius="0.2" 
+                    color="#6B9E3E"
+                    scale="2 1 0.3">
+                </a-sphere>
+            </a-entity>
+            
+            <!-- Hoja derecha -->
+            <a-entity position="0.2 0.15 0" rotation="0 0 50">
+                <a-sphere 
+                    radius="0.2" 
+                    color="#6B9E3E"
+                    scale="2 1 0.3">
+                </a-sphere>
+            </a-entity>
+
+        </a-entity>
+
+        <a-plane 
+            position="0 0 0" 
+            rotation="-90 0 0" 
+            width="10" 
+            height="10" 
+            color="#7BC043"
+            shadow="receive: true">
+        </a-plane>
+
+        <a-sky color="#87CEEB"></a-sky>
+
+    </a-scene>
+</body>
+</html>
