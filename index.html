@@ -4,6 +4,41 @@
     <script src="https://aframe.io/releases/1.0.0/aframe.min.js"></script>
     <script>
         // Spawn de zombies cada 5 segundos
+        let score = 0;
+
+    // Componente para que el zombie camine desde el arbusto
+    AFRAME.registerComponent('zombie-logic', {
+        init: function () {
+            this.el.addEventListener('click', () => {
+                score += 10;
+                document.querySelector('#scoreText').setAttribute('value', 'Puntaje: ' + score);
+                this.el.parentNode.removeChild(this.el); // El zombie muere
+            });
+        },
+        tick: function () {
+            // Movimiento hacia la casa (eje Z positivo)
+            let pos = this.el.getAttribute('position');
+            pos.z += 0.02; 
+            this.el.setAttribute('position', pos);
+        }
+    });
+
+    // Spawn automático desde el arbusto (-30 es la posición de tu arbusto)
+    setInterval(() => {
+        const scene = document.querySelector('a-scene');
+        const zombieTemplates = ['#zombie-normal', '#zombie-cono', '#zombie-cubeta'];
+        const randomId = zombieTemplates[Math.floor(Math.random() * zombieTemplates.length)];
+        const original = document.querySelector(randomId);
+        
+        if(original) {
+            const clone = original.cloneNode(true);
+            clone.setAttribute('position', {x: (Math.random() * 4 - 2), y: -0.5, z: -25});
+            clone.setAttribute('zombie-logic', '');
+            clone.setAttribute('class', 'zombie-target');
+            clone.setAttribute('visible', 'true');
+            scene.appendChild(clone);
+        }
+    }, 5000);
     </script>
     <title>PVZ - GAME</title>
 </head>
@@ -11,7 +46,8 @@
     <a-scene>
         <a-sky color="lightblue"></a-sky>
         <a-camera>
-            <a-cursor></a-cursor>
+            <a-cursor raycaster="objects: .zombie-target"></a-cursor>
+            <a-text id="scoreText" value="Puntos: 0" position="1.5 1 -2" color="black" width="4"></a-text>
         </a-camera>
 
     <!-- CESPED 01 -->
@@ -981,8 +1017,9 @@
 
         </a-entity>
 
-        <!-- ZOMBIES -->
-        <a-entity id="zombie-normal" position="0 -0.5 -17">
+        <!--ZOMBIES-->
+        <!--Zombie Normal-->
+        <a-entity id="zombie-normal" position="0 -0.5 -17" visible="false">
             <a-box position="0 1.1 0" width="0.5" height="0.9" depth="0.3" color="#4a3b2a" shadow>
                 <a-box position="0 0.2 0.16" width="0.3" height="0.4" depth="0.05" color="#d1d1bd"></a-box>
                 <a-box position="0 0.05 0.17" width="0.04" height="0.45" depth="0.05" color="#5a0000"></a-box>
@@ -1003,7 +1040,8 @@
             <a-box position="-0.35 1.3 0.3" width="0.1" height="0.1" depth="0.7" color="#6b8e6d" rotation="-5 -10 0"></a-box>
         </a-entity>
 
-        <a-entity id="zombie-cono" position="-2 -0.5 -17">
+        <!--Zombie Cono-->
+        <a-entity id="zombie-cono" position="-2 -0.5 -17" visible="false">
             <a-box position="0 1.1 0" width="0.5" height="0.9" depth="0.3" color="#4a3b2a" shadow>
                 <a-box position="0 0.2 0.16" width="0.3" height="0.4" depth="0.05" color="#d1d1bd"></a-box>
                 <a-box position="0 0.05 0.17" width="0.04" height="0.45" depth="0.05" color="#5a0000"></a-box>
@@ -1028,7 +1066,8 @@
             <a-box position="-0.35 1.3 0.3" width="0.1" height="0.1" depth="0.7" color="#6b8e6d" rotation="-5 -10 0"></a-box>
         </a-entity>
 
-        <a-entity id="zombie-cubeta" position="2 -0.5 -17">
+        <!--Zombie Cubeta-->
+        <a-entity id="zombie-cubeta" position="2 -0.5 -17" visible="false">
             <a-box position="0 1.1 0" width="0.5" height="0.9" depth="0.3" color="#4a3b2a" shadow>
                 <a-box position="0 0.2 0.16" width="0.3" height="0.4" depth="0.05" color="#d1d1bd"></a-box>
                 <a-box position="0 0.05 0.17" width="0.04" height="0.45" depth="0.05" color="#5a0000"></a-box>
