@@ -3,141 +3,341 @@
 <head>
     <script src="https://aframe.io/releases/1.0.0/aframe.min.js"></script>
     <script>
-        // Spawn de zombies cada 5 segundos
         let score = 0;
+        let gameRunning = false;
+        let spawnInterval = null;
 
-    // Componente para que el zombie camine desde el arbusto
-    AFRAME.registerComponent('zombie-logic', {
-        init: function () {
-            this.el.addEventListener('click', () => {
+        // ============================================================
+        // COMPONENTE ZOMBIE-LOGIC
+        // ============================================================
+        AFRAME.registerComponent('zombie-logic', {
+            schema: {
+                zombieType: { type: 'string', default: 'normal' },
+                hp:         { type: 'number', default: 5 },
+                stopped:    { type: 'boolean', default: false },
+                stopTimer:  { type: 'number', default: 0 }
+            },
+            init: function() {
+                this.el.addEventListener('click', () => this.takeDamage(999));
+            },
+            takeDamage: function(dmg) {
+                this.data.hp -= dmg;
+                this.el.querySelectorAll('a-sphere, a-box, a-cylinder, a-cone').forEach(part => {
+                    const orig = part.getAttribute('color') || '#6b8e6d';
+                    part.setAttribute('color', '#ff4444');
+                    setTimeout(() => part.setAttribute('color', orig), 150);
+                });
+                if (this.data.hp <= 0) this.die();
+            },
+            die: function() {
                 score += 10;
                 document.querySelector('#scoreText').setAttribute('value', 'Puntaje: ' + score);
-                this.el.parentNode.removeChild(this.el); // El zombie muere
-            });
-        },
-        tick: function () {
-            // Movimiento hacia la casa (eje Z positivo)
-            let pos = this.el.getAttribute('position');
-            pos.z += 0.02; 
-            this.el.setAttribute('position', pos);
-        }
-    });
+                GameState.activeZombies = GameState.activeZombies.filter(z => z.entity !== this.el);
+                if (this.el.parentNode) this.el.parentNode.removeChild(this.el);
+            },
+            stop: function(duration) {
+                this.data.stopped = true;
+                this.data.stopTimer = Date.now() + duration;
+                this.el.querySelectorAll('a-sphere').forEach(s => s.setAttribute('color', '#aaddff'));
+            },
+            tick: function() {
+                if (!gameRunning) return;
 
-    // Spawn automático desde el arbusto (-30 es la posición de tu arbusto)
-    setInterval(() => {
-        const scene = document.querySelector('a-scene');
-        const zombieTemplates = ['#zombie-normal', '#zombie-cono', '#zombie-cubeta'];
-        const randomId = zombieTemplates[Math.floor(Math.random() * zombieTemplates.length)];
-        const original = document.querySelector(randomId);
-        
-        if(original) {
-            const clone = original.cloneNode(true);
-            clone.setAttribute('position', {x: (Math.random() * 4 - 2), y: -0.5, z: -25});
-            clone.setAttribute('zombie-logic', '');
-            clone.setAttribute('class', 'zombie-target');
-            clone.setAttribute('visible', 'true');
-            scene.appendChild(clone);
+                if (this.data.stopped && Date.now() > this.data.stopTimer) {
+                    this.data.stopped = false;
+                }
+                if (this.data.stopped) return;
+
+                let pos = this.el.getAttribute('position');
+
+                // Chequear nueces cercanas
+                for (let nut of GameState.wallnuts) {
+                    if (!nut.entity || !nut.entity.parentNode) continue;
+                    const np = nut.entity.getAttribute('position');
+                    const dist = Math.sqrt(Math.pow(pos.x - np.x, 2) + Math.pow(pos.z - np.z, 2));
+                    if (dist < 2.5) {
+                        this.stop(30000);
+                        showNutAlert();
+                        return;
+                    }
+                }
+
+                // Mover hacia la casa
+                pos.z += 0.018;
+                this.el.setAttribute('position', pos);
+
+                // ¿Llegó a la casa?
+                if (pos.z >= 2) gameOver();
+            }
+        });
+
+        // ============================================================
+        // COMPONENTE PEASHOOTER
+        // ============================================================
+        AFRAME.registerComponent('peashooter-logic', {
+            init: function() {
+                this.lastShot = 0;
+            },
+            tick: function(time) {
+                if (!gameRunning) return;
+                if (time - this.lastShot < 2000) return;
+
+                const myPos = this.el.getAttribute('position');
+                let target = null, minDist = Infinity;
+
+                for (let z of GameState.activeZombies) {
+                    if (!z.entity || !z.entity.parentNode) continue;
+                    const zp = z.entity.getAttribute('position');
+                    // Mismo carril (X ± 2) y el zombie está delante
+                    if (Math.abs(zp.x - myPos.x) < 2.0 && zp.z < myPos.z) {
+                        const dist = zp.z - myPos.z;
+                        if (dist < minDist) { minDist = dist; target = z; }
+                    }
+                }
+
+                if (target) {
+                    this.lastShot = time;
+                    shootPea(myPos, target);
+                }
+            }
+        });
+
+        function shootPea(fromPos, targetData) {
+            const container = document.getElementById('projectiles-container');
+            if (!container) return;
+
+            const pea = document.createElement('a-sphere');
+            pea.setAttribute('radius', '0.12');
+            pea.setAttribute('color', '#22cc44');
+            pea.setAttribute('material', 'emissive: #11aa22; emissiveIntensity: 0.6');
+            pea.setAttribute('position', { x: fromPos.x, y: fromPos.y + 1, z: fromPos.z });
+            container.appendChild(pea);
+
+            const iv = setInterval(() => {
+                if (!gameRunning || !pea.parentNode) { clearInterval(iv); return; }
+                if (!targetData.entity || !targetData.entity.parentNode) {
+                    clearInterval(iv);
+                    if (pea.parentNode) pea.parentNode.removeChild(pea);
+                    return;
+                }
+                const pp = pea.getAttribute('position');
+                const tp = targetData.entity.getAttribute('position');
+                const dx = tp.x - pp.x, dz = tp.z - pp.z;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+
+                if (dist < 0.4) {
+                    clearInterval(iv);
+                    if (pea.parentNode) pea.parentNode.removeChild(pea);
+                    const lc = targetData.entity.components['zombie-logic'];
+                    if (lc) lc.takeDamage(1);
+                } else {
+                    pea.setAttribute('position', {
+                        x: pp.x + (dx / dist) * 0.15,
+                        y: pp.y,
+                        z: pp.z + (dz / dist) * 0.15
+                    });
+                }
+            }, 50);
         }
-    }, 5000);
+
+        // ============================================================
+        // PLANT-TILE COMPONENT
+        // ============================================================
+        AFRAME.registerComponent('plant-tile', {
+            init: function() {
+                this.el.addEventListener('click', () => {
+                    if (!GameState.selectedPlant || !gameRunning) return;
+                    const row = this.el.dataset.row;
+                    const col = this.el.dataset.col;
+                    const tileKey = `${row}-${col}`;
+                    if (GameState.plantedTiles[tileKey]) return;
+                    if (GameState.sunPoints < GameState.selectedCost) return;
+                    plantPlant(this.el, GameState.selectedPlant, tileKey);
+                    GameState.sunPoints -= GameState.selectedCost;
+                    updateSunCounter();
+                    document.querySelectorAll('.plant-card').forEach(c => c.classList.remove('selected'));
+                    GameState.selectedPlant = null;
+                    GameState.selectedCost = 0;
+                });
+            }
+        });
+
+        // ============================================================
+        // SUN COLLECTABLE COMPONENT
+        // ============================================================
+        AFRAME.registerComponent('sun-collectable', {
+            init: function() {
+                this.el.addEventListener('click', (evt) => {
+                    evt.stopPropagation();
+                    collectSun(this.el);
+                });
+            }
+        });
     </script>
-    <style>
-        /* UI del juego */
-        body {
-            margin: 0;
-            overflow: hidden;
-        }
 
-        #game-ui {
-            position: fixed;
-            top: 20px;
-            left: 20px;
-            font-family: Arial, sans-serif;
-            z-index: 1000;
+    <style>
+        body { margin: 0; overflow: hidden; }
+
+        /* ===== PANTALLA DE INICIO ===== */
+        #start-screen {
+            position: fixed; top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: linear-gradient(160deg, #1a3a0a 0%, #2d6a10 40%, #1a3a0a 100%);
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            z-index: 9999; font-family: 'Georgia', serif;
         }
-        
+        #start-screen h1 {
+            font-size: clamp(42px, 7vw, 80px);
+            color: #ffe44d;
+            text-shadow: 4px 4px 0 #6b3a00, 0 0 40px #ffaa00;
+            letter-spacing: 4px; margin: 0 0 10px; text-align: center;
+            animation: pulse 2s ease-in-out infinite;
+        }
+        #start-screen h2 {
+            font-size: clamp(20px, 3vw, 36px);
+            color: #b4e066; letter-spacing: 6px;
+            margin: 0 0 50px; text-align: center;
+            text-shadow: 2px 2px 0 #2a5a00;
+        }
+        @keyframes pulse {
+            0%,100% { text-shadow: 4px 4px 0 #6b3a00, 0 0 30px #ffaa00; }
+            50%      { text-shadow: 4px 4px 0 #6b3a00, 0 0 60px #ffaa00, 0 0 90px #ff8800; }
+        }
+        #start-btn {
+            background: linear-gradient(135deg, #66cc22, #336600);
+            color: #fff; font-size: 28px;
+            font-family: 'Georgia', serif; font-weight: bold;
+            border: 4px solid #99ff44; border-radius: 16px;
+            padding: 18px 60px; cursor: pointer; letter-spacing: 3px;
+            box-shadow: 0 6px 0 #1a4400, 0 0 30px rgba(102,204,34,0.6);
+            transition: all 0.15s; text-transform: uppercase;
+            animation: btnGlow 2s ease-in-out infinite;
+        }
+        #start-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 9px 0 #1a4400, 0 0 50px rgba(102,204,34,0.9);
+        }
+        #start-btn:active { transform: translateY(3px); box-shadow: 0 3px 0 #1a4400; }
+        @keyframes btnGlow {
+            0%,100% { box-shadow: 0 6px 0 #1a4400, 0 0 20px rgba(102,204,34,0.5); }
+            50%      { box-shadow: 0 6px 0 #1a4400, 0 0 45px rgba(102,204,34,0.9); }
+        }
+        .start-hint {
+            margin-top: 22px; color: rgba(200,255,150,0.7);
+            font-size: 16px; letter-spacing: 2px;
+            animation: blink 1.5s ease-in-out infinite;
+        }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+        /* ===== GAME OVER ===== */
+        #gameover-screen {
+            display: none; position: fixed; top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.87);
+            flex-direction: column; align-items: center;
+            justify-content: center; z-index: 9998;
+            font-family: 'Georgia', serif;
+        }
+        #gameover-screen h1 {
+            font-size: clamp(50px, 9vw, 100px); color: #ff3333;
+            text-shadow: 4px 4px 0 #660000, 0 0 40px #ff0000;
+            margin: 0 0 20px;
+        }
+        #gameover-screen p { color: #ffcccc; font-size: 22px; margin: 0 0 40px; }
+        #restart-btn {
+            background: linear-gradient(135deg, #cc3300, #660000);
+            color: #fff; font-size: 24px;
+            font-family: 'Georgia', serif; font-weight: bold;
+            border: 3px solid #ff6644; border-radius: 14px;
+            padding: 15px 50px; cursor: pointer; letter-spacing: 2px;
+            box-shadow: 0 5px 0 #330000; transition: all 0.15s;
+            text-transform: uppercase;
+        }
+        #restart-btn:hover { transform: translateY(-3px); }
+        #restart-btn:active { transform: translateY(2px); }
+
+        /* ===== HUD ===== */
+        #game-ui {
+            position: fixed; top: 20px; left: 20px;
+            font-family: Arial, sans-serif; z-index: 1000;
+            display: none;
+        }
         #sun-counter {
             background: linear-gradient(135deg, #FFD700, #FFA500);
-            padding: 15px 30px;
-            border-radius: 12px;
-            font-size: 32px;
-            font-weight: bold;
-            color: #000;
+            padding: 15px 30px; border-radius: 12px;
+            font-size: 32px; font-weight: bold; color: #000;
             box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-            border: 3px solid #FF8C00;
-            margin-bottom: 20px;
-            text-align: center;
+            border: 3px solid #FF8C00; margin-bottom: 20px; text-align: center;
         }
-
         #plant-menu {
             background: rgba(139, 90, 43, 0.95);
-            padding: 15px;
-            border-radius: 10px;
+            padding: 15px; border-radius: 10px;
             border: 3px solid #654321;
             box-shadow: 0 4px 12px rgba(0,0,0,0.5);
         }
-
         .plant-card {
             background: linear-gradient(135deg, #8B7355, #6B5344);
-            border: 3px solid #4a3b2a;
-            border-radius: 8px;
-            padding: 12px;
-            margin-bottom: 10px;
-            cursor: pointer;
-            transition: all 0.2s;
-            color: white;
+            border: 3px solid #4a3b2a; border-radius: 8px;
+            padding: 12px; margin-bottom: 10px; cursor: pointer;
+            transition: all 0.2s; color: white;
             text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
         }
-
         .plant-card:hover {
-            transform: scale(1.05);
-            border-color: #FFD700;
-            box-shadow: 0 0 15px rgba(255, 215, 0, 0.5);
+            transform: scale(1.05); border-color: #FFD700;
+            box-shadow: 0 0 15px rgba(255,215,0,0.5);
         }
-
         .plant-card.selected {
             border-color: #00FF00;
-            box-shadow: 0 0 20px rgba(0, 255, 0, 0.7);
+            box-shadow: 0 0 20px rgba(0,255,0,0.7);
             background: linear-gradient(135deg, #6B9E3E, #507A2E);
         }
-
-        .plant-card.disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .plant-name {
-            font-size: 18px;
-            font-weight: bold;
-            margin-bottom: 5px;
-        }
-
-        .plant-cost {
-            font-size: 16px;
-            color: #FFD700;
-        }
+        .plant-card.disabled { opacity: 0.5; cursor: not-allowed; }
+        .plant-name { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
+        .plant-cost { font-size: 16px; color: #FFD700; }
 
         #instructions {
-            position: fixed;
-            bottom: 20px;
-            left: 50%;
+            position: fixed; bottom: 20px; left: 50%;
             transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.8);
-            color: white;
-            padding: 15px 25px;
-            border-radius: 10px;
-            font-size: 16px;
-            text-align: center;
-            z-index: 1000;
+            background: rgba(0,0,0,0.8); color: white;
+            padding: 15px 25px; border-radius: 10px;
+            font-size: 16px; text-align: center;
+            z-index: 1000; display: none;
+        }
+
+        /* ===== ALERTA NUEZ ===== */
+        #nut-alert {
+            display: none; position: fixed; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(180,100,30,0.95); color: #fff;
+            padding: 12px 28px; border-radius: 12px;
+            font-size: 20px; font-family: 'Georgia', serif;
+            border: 3px solid #FFD700; z-index: 2000;
+            pointer-events: none;
         }
     </style>
     <title>PVZ - GAME</title>
 </head>
 <body>
 
-    <!-- UI del juego -->
+    <!-- ===== PANTALLA DE INICIO ===== -->
+    <div id="start-screen">
+        <h1>🌻 PLANTS vs ZOMBIES 🧟</h1>
+        <h2>⚔ VR EDITION ⚔</h2>
+        <button id="start-btn" onclick="startGame()">¡JUGAR!</button>
+        <p class="start-hint">Haz clic para comenzar</p>
+    </div>
+
+    <!-- ===== GAME OVER ===== -->
+    <div id="gameover-screen">
+        <h1>💀 GAME OVER 💀</h1>
+        <p>¡Los zombis llegaron a tu casa!</p>
+        <button id="restart-btn" onclick="restartGame()">Volver al Inicio</button>
+    </div>
+
+    <!-- ===== HUD ===== -->
     <div id="game-ui">
         <div id="sun-counter">☀️ <span id="sun-amount">50</span></div>
-        
         <div id="plant-menu">
             <div class="plant-card" data-plant="sunflower" data-cost="50">
                 <div class="plant-name">🌻 Girasol</div>
@@ -158,188 +358,105 @@
         Haz clic en una planta del menú, luego haz clic en un cuadro VERDE para plantarla. Haz clic en los SOLES para recogerlos.
     </div>
 
+    <div id="nut-alert">🥜 ¡Nuez bloqueando zombis! 30 seg</div>
+
     <a-scene>
         <a-sky color="lightblue"></a-sky>
         <a-camera>
-            <a-cursor raycaster="objects: .zombie-target"></a-cursor>
-            <a-cursor position="0 0 -1" geometry="primitive: ring; radiusInner: 0.02; radiusOuter: 0.03" material="color: black; shader: flat"></a-cursor>  
+            <a-cursor raycaster="objects: .zombie-target, .clickable, .plant-tile"></a-cursor>
+            <a-cursor position="0 0 -1" geometry="primitive: ring; radiusInner: 0.02; radiusOuter: 0.03" material="color: black; shader: flat"></a-cursor>
             <a-text id="scoreText" value="Puntos: 0" position="1.5 1 -2" color="black" width="4"></a-text>
         </a-camera>
 
         <!-- CESPED 01 - CLICKEABLES PARA PLANTAR -->
-        <a-plane class="clickable plant-tile" data-row="0" data-col="0" position="0 0 -2" rotation="-90 0 0" width="2" height="1.5" src="img/cesped.jpg"></a-plane>
-        <a-plane class="clickable plant-tile" data-row="1" data-col="0" position="0 0 -5" rotation="-90 0 0" width="2" height="1.5" src="img/cesped.jpg"></a-plane>
-        <a-plane class="clickable plant-tile" data-row="2" data-col="0" position="0 0 -8" rotation="-90 0 0" width="2" height="1.5" src="img/cesped.jpg"></a-plane>
+        <a-plane class="clickable plant-tile" data-row="0" data-col="0" position="0 0 -2"  rotation="-90 0 0" width="2" height="1.5" src="img/cesped.jpg"></a-plane>
+        <a-plane class="clickable plant-tile" data-row="1" data-col="0" position="0 0 -5"  rotation="-90 0 0" width="2" height="1.5" src="img/cesped.jpg"></a-plane>
+        <a-plane class="clickable plant-tile" data-row="2" data-col="0" position="0 0 -8"  rotation="-90 0 0" width="2" height="1.5" src="img/cesped.jpg"></a-plane>
         <a-plane class="clickable plant-tile" data-row="3" data-col="0" position="0 0 -11" rotation="-90 0 0" width="2" height="1.5" src="img/cesped.jpg"></a-plane>
         <a-plane class="clickable plant-tile" data-row="4" data-col="0" position="0 0 -14" rotation="-90 0 0" width="2" height="1.5" src="img/cesped.jpg"></a-plane>
         <a-plane class="clickable plant-tile" data-row="5" data-col="0" position="0 0 -17" rotation="-90 0 0" width="2" height="1.5" src="img/cesped.jpg"></a-plane>
 
         <!-- CESPED 02 - CLICKEABLES PARA PLANTAR -->
-        <a-plane class="clickable plant-tile" data-row="0" data-col="1" position="0 0 -3.5" rotation="-90 0 0" width="2" height="1.5" src="img/cesped_02.jpg"></a-plane>
-        <a-plane class="clickable plant-tile" data-row="1" data-col="1" position="0 0 -6.5" rotation="-90 0 0" width="2" height="1.5" src="img/cesped_02.jpg"></a-plane>
-        <a-plane class="clickable plant-tile" data-row="2" data-col="1" position="0 0 -9.5" rotation="-90 0 0" width="2" height="1.5" src="img/cesped_02.jpg"></a-plane>
+        <a-plane class="clickable plant-tile" data-row="0" data-col="1" position="0 0 -3.5"  rotation="-90 0 0" width="2" height="1.5" src="img/cesped_02.jpg"></a-plane>
+        <a-plane class="clickable plant-tile" data-row="1" data-col="1" position="0 0 -6.5"  rotation="-90 0 0" width="2" height="1.5" src="img/cesped_02.jpg"></a-plane>
+        <a-plane class="clickable plant-tile" data-row="2" data-col="1" position="0 0 -9.5"  rotation="-90 0 0" width="2" height="1.5" src="img/cesped_02.jpg"></a-plane>
         <a-plane class="clickable plant-tile" data-row="3" data-col="1" position="0 0 -12.5" rotation="-90 0 0" width="2" height="1.5" src="img/cesped_02.jpg"></a-plane>
         <a-plane class="clickable plant-tile" data-row="4" data-col="1" position="0 0 -15.5" rotation="-90 0 0" width="2" height="1.5" src="img/cesped_02.jpg"></a-plane>
 
         <!-- TIERRA COLUMNA 01 -->
-        <a-plane position="2 0 -2" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="2 0 -3.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="2 0 -5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="2 0 -6.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="2 0 -8" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="2 0 -9.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="2 0 -11" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="2 0 -2"    rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="2 0 -3.5"  rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="2 0 -5"    rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="2 0 -6.5"  rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="2 0 -8"    rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="2 0 -9.5"  rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="2 0 -11"   rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
         <a-plane position="2 0 -12.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="2 0 -14" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="2 0 -14"   rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
         <a-plane position="2 0 -15.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="2 0 -17" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="2 0 -17"   rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
 
         <!-- TIERRA COLUMNA 02 -->
-        <a-plane position="-2 0 -2" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="-2 0 -3.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="-2 0 -5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="-2 0 -6.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="-2 0 -8" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="-2 0 -9.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="-2 0 -11" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="-2 0 -2"    rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="-2 0 -3.5"  rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="-2 0 -5"    rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="-2 0 -6.5"  rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="-2 0 -8"    rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="-2 0 -9.5"  rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="-2 0 -11"   rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
         <a-plane position="-2 0 -12.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="-2 0 -14" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="-2 0 -14"   rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
         <a-plane position="-2 0 -15.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="-2 0 -17" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="-2 0 -17"   rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
 
         <!-- TIERRA COLUMNA 03 -->
-        <a-plane position="4 0 -2" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="4 0 -3.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="4 0 -5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="4 0 -6.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="4 0 -8" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="4 0 -9.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="4 0 -11" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="4 0 -2"    rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="4 0 -3.5"  rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="4 0 -5"    rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="4 0 -6.5"  rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="4 0 -8"    rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="4 0 -9.5"  rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="4 0 -11"   rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
         <a-plane position="4 0 -12.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="4 0 -14" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="4 0 -14"   rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
         <a-plane position="4 0 -15.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="4 0 -17" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="4 0 -17"   rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
 
         <!-- TIERRA COLUMNA 04 -->
-        <a-plane position="-4 0 -2" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="-4 0 -3.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="-4 0 -5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="-4 0 -6.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="-4 0 -8" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="-4 0 -9.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="-4 0 -11" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="-4 0 -2"    rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="-4 0 -3.5"  rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="-4 0 -5"    rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="-4 0 -6.5"  rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="-4 0 -8"    rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="-4 0 -9.5"  rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="-4 0 -11"   rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
         <a-plane position="-4 0 -12.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="-4 0 -14" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="-4 0 -14"   rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
         <a-plane position="-4 0 -15.5" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
-        <a-plane position="-4 0 -17" rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
+        <a-plane position="-4 0 -17"   rotation="-90 0 0" width="2" height="1.5" src="img/tierra.jpg"></a-plane>
 
         <!-- LIMITANTES -->
-        <a-box position="6 2 -4" rotation="0 90 0" width="30" height="5" depth="1" src="img/vallas.jpg"></a-box>
+        <a-box position="6 2 -4"  rotation="0 90 0" width="30" height="5" depth="1" src="img/vallas.jpg"></a-box>
         <a-box position="-6 2 -4" rotation="0 90 0" width="30" height="5" depth="1" src="img/vallas.jpg"></a-box>
-        
+
         <!-- CASA -->
         <a-entity position="0 2 4">
-
-            <!-- Base -->
-            <a-box
-                position="0 0 0"
-                width="6"
-                height="4"
-                depth="4"
-                src="img/casa.jpg">
-            </a-box>
-
-            <!-- Techo -->
-            <a-cone
-                position="0 3 0"
-                radius-bottom="4.5"
-                height="3"
-                color="#8b0000">
-            </a-cone>
-
-            <!-- Puerta -->
-            <a-box
-                position="0 -1 -2.01"
-                width="1.2"
-                height="2"
-                depth="0.1"
-                src="img/puerta.jpg">
-            </a-box>
-
-            <!-- Ventana izquierda frontal -->
-            <a-box
-                position="-1.8 0.5 -2.01"
-                width="1"
-                height="1"
-                depth="0.1"
-                color="#87CEEB">
-            </a-box>
-
-            <!-- Ventana derecha frontal -->
-            <a-box
-                position="1.8 0.5 -2.01"
-                width="1"
-                height="1"
-                depth="0.1"
-                color="#87CEEB">
-            </a-box>
-
-            <!-- Ventana lateral izquierda -->
-            <a-box
-                position="-3.01 0.5 0"
-                width="0.1"
-                height="1"
-                depth="1"
-                color="#87CEEB">
-            </a-box>
-
-            <!-- Ventana lateral derecha -->
-            <a-box
-                position="3.01 0.5 0"
-                width="0.1"
-                height="1"
-                depth="1"
-                color="#87CEEB">
-            </a-box>
-
-            <!-- Alfombra -->
-            <a-plane
-                position="0 -2.01 -2.8"
-                rotation="-90 0 0"
-                width="2"
-                height="1"
-                color="#8B0000">
-            </a-plane>
-
-            <!-- Escalón -->
-            <a-box
-                position="0 -1.9 -2.4"
-                width="2"
-                height="0.2"
-                depth="0.6"
-                color="#999999">
-            </a-box>
-
+            <a-box position="0 0 0" width="6" height="4" depth="4" src="img/casa.jpg"></a-box>
+            <a-cone position="0 3 0" radius-bottom="4.5" height="3" color="#8b0000"></a-cone>
+            <a-box position="0 -1 -2.01" width="1.2" height="2" depth="0.1" src="img/puerta.jpg"></a-box>
+            <a-box position="-1.8 0.5 -2.01" width="1" height="1" depth="0.1" color="#87CEEB"></a-box>
+            <a-box position="1.8 0.5 -2.01"  width="1" height="1" depth="0.1" color="#87CEEB"></a-box>
+            <a-box position="-3.01 0.5 0" width="0.1" height="1" depth="1" color="#87CEEB"></a-box>
+            <a-box position="3.01 0.5 0"  width="0.1" height="1" depth="1" color="#87CEEB"></a-box>
+            <a-plane position="0 -2.01 -2.8" rotation="-90 0 0" width="2" height="1" color="#8B0000"></a-plane>
+            <a-box position="0 -1.9 -2.4" width="2" height="0.2" depth="0.6" color="#999999"></a-box>
         </a-entity>
 
         <!-- PISO -->
-        <a-plane
-            position="0 -0.1 0"
-            rotation="-90 0 0"
-            width="10"
-            height="10"
-            src="img/piso.jpg"
-        ></a-plane>
+        <a-plane position="0 -0.1 0" rotation="-90 0 0" width="10" height="10" src="img/piso.jpg"></a-plane>
 
-        
         <!-- CARRETERA -->
-        <a-plane
-            position="0 0 -22.8"
-            rotation="-90 0 0"
-            width="14"
-            height="10"
-            color="#555555">
-        </a-plane>
+        <a-plane position="0 0 -22.8" rotation="-90 0 0" width="14" height="10" color="#555555"></a-plane>
 
         <!-- Contenedor de plantas dinámicas -->
         <a-entity id="plants-container"></a-entity>
@@ -347,186 +464,234 @@
         <!-- Contenedor de soles -->
         <a-entity id="suns-container"></a-entity>
 
-        <!-- Línea central -->
-        <a-plane
-            position="0 0.01 -22"
-            rotation="-90 0 0"
-            width="14"
-            height="0.15"
-            color="yellow">
-        </a-plane>
+        <!-- Contenedor de proyectiles -->
+        <a-entity id="projectiles-container"></a-entity>
 
-        <!--ZOMBIES-->
-        <!--Zombie Normal-->
+        <!-- Línea central -->
+        <a-plane position="0 0.01 -22" rotation="-90 0 0" width="14" height="0.15" color="yellow"></a-plane>
+
+        <!-- ZOMBIES (templates ocultos) -->
         <a-entity id="zombie-normal" position="0 -0.5 -17" visible="false">
             <a-box position="0 1.1 0" width="0.5" height="0.9" depth="0.3" color="#4a3b2a" shadow>
                 <a-box position="0 0.2 0.16" width="0.3" height="0.4" depth="0.05" color="#d1d1bd"></a-box>
                 <a-box position="0 0.05 0.17" width="0.04" height="0.45" depth="0.05" color="#5a0000"></a-box>
             </a-box>
-
             <a-entity position="0 1.8 0.1">
-            <a-sphere radius="0.28" color="#6b8e6d" material="roughness: 1"></a-sphere>
-            <a-sphere position="-0.12 0.1 0.23" radius="0.09" color="#fff" material="emissive: #fff; emissiveIntensity: 0.1">
-                <a-sphere position="0 0 0.08" radius="0.03" color="#000"></a-sphere>
-            </a-sphere>
-            <a-sphere position="0.12 0.05 0.23" radius="0.12" color="#fff">
-                <a-sphere position="0 0 0.1" radius="0.04" color="#000"></a-sphere>
-            </a-sphere>
-            <a-box position="0 -0.2 0.1" width="0.35" height="0.2" depth="0.3" color="#557a57"></a-box>
+                <a-sphere radius="0.28" color="#6b8e6d" material="roughness: 1"></a-sphere>
+                <a-sphere position="-0.12 0.1 0.23" radius="0.09" color="#fff" material="emissive: #fff; emissiveIntensity: 0.1">
+                    <a-sphere position="0 0 0.08" radius="0.03" color="#000"></a-sphere>
+                </a-sphere>
+                <a-sphere position="0.12 0.05 0.23" radius="0.12" color="#fff">
+                    <a-sphere position="0 0 0.1" radius="0.04" color="#000"></a-sphere>
+                </a-sphere>
+                <a-box position="0 -0.2 0.1" width="0.35" height="0.2" depth="0.3" color="#557a57"></a-box>
             </a-entity>
-
             <a-box position="0.35 1.4 0.3" width="0.1" height="0.1" depth="0.7" color="#6b8e6d" rotation="5 10 0"></a-box>
             <a-box position="-0.35 1.3 0.3" width="0.1" height="0.1" depth="0.7" color="#6b8e6d" rotation="-5 -10 0"></a-box>
         </a-entity>
 
-        <!--Zombie Cono-->
         <a-entity id="zombie-cono" position="-2 -0.5 -17" visible="false">
             <a-box position="0 1.1 0" width="0.5" height="0.9" depth="0.3" color="#4a3b2a" shadow>
                 <a-box position="0 0.2 0.16" width="0.3" height="0.4" depth="0.05" color="#d1d1bd"></a-box>
                 <a-box position="0 0.05 0.17" width="0.04" height="0.45" depth="0.05" color="#5a0000"></a-box>
             </a-box>
-
             <a-entity position="0 1.8 0.1">
-            <a-sphere radius="0.28" color="#6b8e6d"></a-sphere>
-            <a-sphere position="-0.12 0.1 0.23" radius="0.09" color="#fff">
-                <a-sphere position="0 0 0.08" radius="0.03" color="#000"></a-sphere>
-            </a-sphere>
-            <a-sphere position="0.12 0.05 0.23" radius="0.12" color="#fff">
-                <a-sphere position="0 0 0.1" radius="0.04" color="#000"></a-sphere>
-            </a-sphere>
-            
-            <a-cone position="0 0.45 0" radius-bottom="0.35" radius-top="0.02" height="0.8" 
-                    color="#e65100" material="roughness: 0.6" rotation="10 0 0" shadow="cast: true"></a-cone>
-            
-            <a-box position="0 -0.2 0.1" width="0.35" height="0.2" depth="0.3" color="#557a57"></a-box>
+                <a-sphere radius="0.28" color="#6b8e6d"></a-sphere>
+                <a-sphere position="-0.12 0.1 0.23" radius="0.09" color="#fff">
+                    <a-sphere position="0 0 0.08" radius="0.03" color="#000"></a-sphere>
+                </a-sphere>
+                <a-sphere position="0.12 0.05 0.23" radius="0.12" color="#fff">
+                    <a-sphere position="0 0 0.1" radius="0.04" color="#000"></a-sphere>
+                </a-sphere>
+                <a-cone position="0 0.45 0" radius-bottom="0.35" radius-top="0.02" height="0.8"
+                        color="#e65100" material="roughness: 0.6" rotation="10 0 0" shadow="cast: true"></a-cone>
+                <a-box position="0 -0.2 0.1" width="0.35" height="0.2" depth="0.3" color="#557a57"></a-box>
             </a-entity>
-
             <a-box position="0.35 1.4 0.3" width="0.1" height="0.1" depth="0.7" color="#6b8e6d" rotation="5 10 0"></a-box>
             <a-box position="-0.35 1.3 0.3" width="0.1" height="0.1" depth="0.7" color="#6b8e6d" rotation="-5 -10 0"></a-box>
         </a-entity>
 
-        <!--Zombie Cubeta-->
         <a-entity id="zombie-cubeta" position="2 -0.5 -17" visible="false">
             <a-box position="0 1.1 0" width="0.5" height="0.9" depth="0.3" color="#4a3b2a" shadow>
                 <a-box position="0 0.2 0.16" width="0.3" height="0.4" depth="0.05" color="#d1d1bd"></a-box>
                 <a-box position="0 0.05 0.17" width="0.04" height="0.45" depth="0.05" color="#5a0000"></a-box>
             </a-box>
-
             <a-entity position="0 1.8 0.1">
-            <a-sphere radius="0.28" color="#6b8e6d"></a-sphere>
-            <a-sphere position="-0.12 0.1 0.23" radius="0.09" color="#fff">
-                <a-sphere position="0 0 0.08" radius="0.03" color="#000"></a-sphere>
-            </a-sphere>
-            <a-sphere position="0.12 0.05 0.23" radius="0.12" color="#fff">
-                <a-sphere position="0 0 0.1" radius="0.04" color="#000"></a-sphere>
-            </a-sphere>
-            
-            <a-cylinder position="0 0.35 0" radius="0.32" height="0.5" 
-                        material="color: #999; metalness: 0.9; roughness: 0.2" 
-                        rotation="15 5 0" shadow="cast: true">
-                <a-ring position="0 -0.25 0" rotation="90 0 0" radius-inner="0.32" radius-outer="0.35" color="#777"></a-ring>
-            </a-cylinder>
-
-            <a-box position="0 -0.2 0.1" width="0.35" height="0.2" depth="0.3" color="#557a57"></a-box>
+                <a-sphere radius="0.28" color="#6b8e6d"></a-sphere>
+                <a-sphere position="-0.12 0.1 0.23" radius="0.09" color="#fff">
+                    <a-sphere position="0 0 0.08" radius="0.03" color="#000"></a-sphere>
+                </a-sphere>
+                <a-sphere position="0.12 0.05 0.23" radius="0.12" color="#fff">
+                    <a-sphere position="0 0 0.1" radius="0.04" color="#000"></a-sphere>
+                </a-sphere>
+                <a-cylinder position="0 0.35 0" radius="0.32" height="0.5"
+                            material="color: #999; metalness: 0.9; roughness: 0.2"
+                            rotation="15 5 0" shadow="cast: true">
+                    <a-ring position="0 -0.25 0" rotation="90 0 0" radius-inner="0.32" radius-outer="0.35" color="#777"></a-ring>
+                </a-cylinder>
+                <a-box position="0 -0.2 0.1" width="0.35" height="0.2" depth="0.3" color="#557a57"></a-box>
             </a-entity>
-
             <a-box position="0.35 1.4 0.3" width="0.1" height="0.1" depth="0.7" color="#6b8e6d" rotation="5 10 0"></a-box>
             <a-box position="-0.35 1.3 0.3" width="0.1" height="0.1" depth="0.7" color="#6b8e6d" rotation="-5 -10 0"></a-box>
         </a-entity>
 
         <!-- ARBUSTO GIGANTE (SPAWN ZOMBIES) -->
         <a-entity id="zombie-spawn" position="0 2 -30">
-
-            <!-- Cuerpo del arbusto -->
-            <a-sphere
-                radius="9"
-                src="img/arbusto01.jpg">
-            </a-sphere>
-
-            <!-- Volumen extra -->
-            <a-sphere
-                position="-3 1 0"
-                radius="7"
-                src="img/arbusto02.jpg">
-            </a-sphere>
-
-            <a-sphere
-                position="3 1 0"
-                radius="7"
-                src="img/arbusto02.jpg">
-            </a-sphere>
-
+            <a-sphere radius="9" src="img/arbusto01.jpg"></a-sphere>
+            <a-sphere position="-3 1 0" radius="7" src="img/arbusto02.jpg"></a-sphere>
+            <a-sphere position="3 1 0"  radius="7" src="img/arbusto02.jpg"></a-sphere>
         </a-entity>
 
     </a-scene>
+
     <script>
-        // REGISTRAR COMPONENTES ANTES DE QUE LA ESCENA CARGUE
-        AFRAME.registerComponent('plant-tile', {
-            init: function() {
-                this.el.addEventListener('click', () => {
-                    if (!GameState.selectedPlant) {
-                        return; // No hacer nada si no hay planta seleccionada
-                    }
-
-                    const row = this.el.dataset.row;
-                    const col = this.el.dataset.col;
-                    const tileKey = `${row}-${col}`;
-
-                    // Verificar si ya hay una planta en este tile
-                    if (GameState.plantedTiles[tileKey]) {
-                        console.log('Ya hay una planta aquí');
-                        return;
-                    }
-
-                    // Verificar si hay suficientes soles
-                    if (GameState.sunPoints < GameState.selectedCost) {
-                        console.log('No tienes suficientes soles');
-                        return;
-                    }
-
-                    // Plantar la planta
-                    plantPlant(this.el, GameState.selectedPlant, tileKey);
-                    
-                    // Restar soles
-                    GameState.sunPoints -= GameState.selectedCost;
-                    updateSunCounter();
-
-                    // IMPORTANTE: Deseleccionar planta correctamente
-                    document.querySelectorAll('.plant-card').forEach(c => c.classList.remove('selected'));
-                    GameState.selectedPlant = null;
-                    GameState.selectedCost = 0;
-                    
-                    console.log('Planta colocada. Listo para nueva selección.');
-                });
-            }
-        });
-
-        // Componente para los soles clickeables
-        AFRAME.registerComponent('sun-collectable', {
-            init: function() {
-                this.el.addEventListener('click', (evt) => {
-                    evt.stopPropagation();
-                    collectSun(this.el);
-                });
-            }
-        });
-
-        // ========================================
-        // SISTEMA DE JUEGO
-        // ========================================
-
+        // ============================================================
+        // ESTADO GLOBAL
+        // ============================================================
         const GameState = {
             sunPoints: 50,
             selectedPlant: null,
             selectedCost: 0,
             plantedTiles: {},
-            sunflowers: []
+            sunflowers: [],
+            activeZombies: [],
+            wallnuts: [],
+            peashooters: []
         };
 
-        // ========================================
-        // PLANTILLAS DE PLANTAS
-        // ========================================
+        // ============================================================
+        // CONTROL DE PANTALLAS
+        // ============================================================
+        function startGame() {
+            document.getElementById('start-screen').style.display = 'none';
+            document.getElementById('game-ui').style.display = 'block';
+            document.getElementById('instructions').style.display = 'block';
+            gameRunning = true;
+            score = 0;
 
+            // Reset estado
+            GameState.sunPoints = 50;
+            GameState.selectedPlant = null;
+            GameState.selectedCost = 0;
+            GameState.plantedTiles = {};
+            GameState.sunflowers = [];
+            GameState.activeZombies = [];
+            GameState.wallnuts = [];
+            GameState.peashooters = [];
+
+            document.querySelector('#scoreText').setAttribute('value', 'Puntos: 0');
+            updateSunCounter();
+
+            // Limpiar contenedores
+            ['plants-container', 'suns-container', 'projectiles-container'].forEach(id => {
+                const el = document.getElementById(id);
+                while (el.firstChild) el.removeChild(el.firstChild);
+            });
+            document.querySelectorAll('.zombie-active').forEach(z => {
+                if (z.parentNode) z.parentNode.removeChild(z);
+            });
+
+            // Soles iniciales tras 3 seg
+            setTimeout(() => {
+                for (let i = 0; i < 3; i++) {
+                    setTimeout(() => {
+                        spawnSun({ x: (Math.random() * 4) - 2, y: 0, z: -2 - (Math.random() * 15) });
+                    }, i * 2000);
+                }
+            }, 3000);
+
+            // Iniciar spawn de zombies
+            if (spawnInterval) clearInterval(spawnInterval);
+            spawnInterval = setInterval(() => { if (gameRunning) spawnZombie(); }, 5000);
+        }
+
+        function gameOver() {
+            gameRunning = false;
+            clearInterval(spawnInterval);
+            document.getElementById('game-ui').style.display = 'none';
+            document.getElementById('instructions').style.display = 'none';
+            document.getElementById('gameover-screen').style.display = 'flex';
+        }
+
+        function restartGame() {
+            document.getElementById('gameover-screen').style.display = 'none';
+            GameState.activeZombies.forEach(z => {
+                if (z.entity && z.entity.parentNode) z.entity.parentNode.removeChild(z.entity);
+            });
+            GameState.activeZombies = [];
+            const pc = document.getElementById('projectiles-container');
+            while (pc && pc.firstChild) pc.removeChild(pc.firstChild);
+            document.getElementById('start-screen').style.display = 'flex';
+        }
+
+        // ============================================================
+        // ALERTA NUEZ
+        // ============================================================
+        let _nutTimeout = null;
+        function showNutAlert() {
+            const el = document.getElementById('nut-alert');
+            el.style.display = 'block';
+            clearTimeout(_nutTimeout);
+            _nutTimeout = setTimeout(() => el.style.display = 'none', 2000);
+        }
+
+        // ============================================================
+        // SPAWN DE ZOMBIES
+        // ============================================================
+        function spawnZombie() {
+            const scene = document.querySelector('a-scene');
+            const types    = ['zombie-normal', 'zombie-cono', 'zombie-cubeta'];
+            const typeKeys = ['normal', 'cono', 'cubeta'];
+            const hpMap    = { normal: 5, cono: 6, cubeta: 10 };
+            const idx      = Math.floor(Math.random() * 3);
+
+            const original = document.querySelector('#' + types[idx]);
+            if (!original) return;
+
+            const clone = original.cloneNode(true);
+            clone.removeAttribute('id');
+            clone.setAttribute('visible', 'true');
+            clone.setAttribute('class', 'zombie-target zombie-active');
+            clone.setAttribute('position', { x: (Math.random() * 2) - 1, y: -0.5, z: -25 });
+            clone.setAttribute('zombie-logic', `zombieType: ${typeKeys[idx]}; hp: ${hpMap[typeKeys[idx]]}`);
+            scene.appendChild(clone);
+
+            GameState.activeZombies.push({ entity: clone, type: typeKeys[idx] });
+        }
+
+        // ============================================================
+        // UI — ACTUALIZAR
+        // ============================================================
+        function updateSunCounter() {
+            document.getElementById('sun-amount').textContent = GameState.sunPoints;
+            updatePlantCards();
+        }
+
+        function updatePlantCards() {
+            document.querySelectorAll('.plant-card').forEach(card => {
+                const cost = parseInt(card.dataset.cost);
+                card.classList.toggle('disabled', GameState.sunPoints < cost);
+            });
+        }
+
+        // ============================================================
+        // SELECCIÓN DE PLANTAS
+        // ============================================================
+        document.querySelectorAll('.plant-card').forEach(card => {
+            card.addEventListener('click', () => {
+                if (!gameRunning) return;
+                const cost = parseInt(card.dataset.cost);
+                if (GameState.sunPoints < cost) return;
+                document.querySelectorAll('.plant-card').forEach(c => c.classList.remove('selected'));
+                card.classList.add('selected');
+                GameState.selectedPlant = card.dataset.plant;
+                GameState.selectedCost = cost;
+            });
+        });
+
+        // ============================================================
+        // PLANTILLAS DE PLANTAS
+        // ============================================================
         const PlantTemplates = {
             sunflower: `
                 <a-entity class="plant" data-type="sunflower">
@@ -544,7 +709,6 @@
                         <a-sphere position="-0.5 0 0" radius="0.18" color="#F0C050"></a-sphere>
                         <a-sphere position="-0.43 0.25 0" radius="0.18" color="#F0C050"></a-sphere>
                         <a-sphere position="-0.25 0.43 0" radius="0.18" color="#F0C050"></a-sphere>
-                        
                         <a-entity position="-0.12 0.08 0.35">
                             <a-sphere radius="0.1" color="#FFFFFF"></a-sphere>
                             <a-sphere position="0 0 0.08" radius="0.05" color="#000000"></a-sphere>
@@ -553,16 +717,12 @@
                             <a-sphere radius="0.1" color="#FFFFFF"></a-sphere>
                             <a-sphere position="0 0 0.08" radius="0.05" color="#000000"></a-sphere>
                         </a-entity>
-                        
                         <a-torus position="0 -0.15 0.38" radius="0.06" radius-tubular="0.012" rotation="180 0 0" arc="100" color="#000000"></a-torus>
                         <a-torus position="0 -0.15 0.38" radius="0.06" radius-tubular="0.012" rotation="180 180 0" arc="100" color="#000000"></a-torus>
-                        
                         <a-sphere position="-0.25 -0.05 0.3" radius="0.06" color="#FFB6C1" opacity="0.7"></a-sphere>
                         <a-sphere position="0.25 -0.05 0.3" radius="0.06" color="#FFB6C1" opacity="0.7"></a-sphere>
                     </a-entity>
-                    
                     <a-cylinder position="0 0.5 0" radius="0.08" height="1" color="#6B9E3E" shadow="cast: true"></a-cylinder>
-                    
                     <a-entity position="-0.2 0.15 0" rotation="0 0 -50">
                         <a-sphere radius="0.2" color="#6B9E3E" scale="2 1 0.3"></a-sphere>
                     </a-entity>
@@ -571,7 +731,6 @@
                     </a-entity>
                 </a-entity>
             `,
-            
             peashooter: `
                 <a-entity class="plant" data-type="peashooter" scale="0.8 0.8 0.8">
                     <a-entity id="cabeza" position="0 1 0">
@@ -582,7 +741,6 @@
                         <a-torus position="0 0 0.7" radius="0.11" radius-tubular="0.02" color="#1A2A10"></a-torus>
                         <a-sphere position="-0.45 0 0.2" radius="0.04" color="#000000"></a-sphere>
                         <a-sphere position="0.45 0 0.2" radius="0.04" color="#000000"></a-sphere>
-                        
                         <a-entity position="0 0.5 -0.1" rotation="0 0 -20">
                             <a-cone radius-bottom="0.15" radius-top="0.02" height="0.4" color="#6B9E3E"></a-cone>
                         </a-entity>
@@ -591,9 +749,7 @@
                         </a-entity>
                         <a-cylinder position="0 0.15 -0.45" radius="0.05" height="0.2" color="#6B9E3E" rotation="-25 0 0"></a-cylinder>
                     </a-entity>
-                    
                     <a-cylinder position="0 0.5 0" radius="0.08" height="1" color="#6B9E3E" shadow="cast: true"></a-cylinder>
-                    
                     <a-entity position="-0.2 0.15 0" rotation="0 0 -50">
                         <a-sphere radius="0.2" color="#6B9E3E" scale="2 1 0.3"></a-sphere>
                     </a-entity>
@@ -602,11 +758,9 @@
                     </a-entity>
                 </a-entity>
             `,
-            
             wallnut: `
                 <a-entity class="plant" data-type="wallnut" position="0 0.6 0" scale="0.6 0.6 0.6">
                     <a-sphere radius="1" scale="1 1.1 0.95" color="#B8924F" shadow="cast: true"></a-sphere>
-                    
                     <a-entity position="-0.3 0.2 0.85">
                         <a-sphere radius="0.25" color="#FFFFFF"></a-sphere>
                         <a-sphere position="0 0 0.2" radius="0.09" color="#000000"></a-sphere>
@@ -615,10 +769,8 @@
                         <a-sphere radius="0.25" color="#FFFFFF"></a-sphere>
                         <a-sphere position="0 0 0.2" radius="0.09" color="#000000"></a-sphere>
                     </a-entity>
-                    
                     <a-box position="-0.3 0.5 0.8" width="0.3" height="0.05" depth="0.05" color="#654321" rotation="0 0 -10"></a-box>
                     <a-box position="0.3 0.5 0.8" width="0.3" height="0.05" depth="0.05" color="#654321" rotation="0 0 10"></a-box>
-                    
                     <a-entity position="0 -0.25 0.92">
                         <a-torus radius="0.18" radius-tubular="0.025" color="#000000" arc="100" rotation="180 0 0"></a-torus>
                         <a-torus radius="0.18" radius-tubular="0.025" color="#000000" arc="100" rotation="180 180 0"></a-torus>
@@ -627,107 +779,58 @@
             `
         };
 
-        // ========================================
-        // ACTUALIZAR UI
-        // ========================================
-
-        function updateSunCounter() {
-            document.getElementById('sun-amount').textContent = GameState.sunPoints;
-            updatePlantCards();
-        }
-
-        function updatePlantCards() {
-            const cards = document.querySelectorAll('.plant-card');
-            cards.forEach(card => {
-                const cost = parseInt(card.dataset.cost);
-                if (GameState.sunPoints < cost) {
-                    card.classList.add('disabled');
-                } else {
-                    card.classList.remove('disabled');
-                }
-            });
-        }
-
-        // ========================================
-        // SELECCIÓN DE PLANTAS
-        // ========================================
-
-        document.querySelectorAll('.plant-card').forEach(card => {
-            card.addEventListener('click', () => {
-                const cost = parseInt(card.dataset.cost);
-                
-                if (GameState.sunPoints < cost) {
-                    console.log('No tienes suficientes soles');
-                    return;
-                }
-
-                // Deseleccionar todas las cartas
-                document.querySelectorAll('.plant-card').forEach(c => c.classList.remove('selected'));
-                
-                // Seleccionar esta carta
-                card.classList.add('selected');
-                GameState.selectedPlant = card.dataset.plant;
-                GameState.selectedCost = cost;
-
-                console.log(`Planta seleccionada: ${GameState.selectedPlant} (Costo: ${cost})`);
-            });
-        });
-
-        // ========================================
+        // ============================================================
         // PLANTACIÓN
-        // ========================================
-
+        // ============================================================
         function plantPlant(tile, plantType, tileKey) {
             const position = tile.getAttribute('position');
             const container = document.getElementById('plants-container');
-            
+
             const plantEntity = document.createElement('a-entity');
             plantEntity.setAttribute('position', `${position.x} ${position.y} ${position.z}`);
             plantEntity.setAttribute('rotation', '0 180 0');
             plantEntity.innerHTML = PlantTemplates[plantType];
-            
-            container.appendChild(plantEntity);
-            
-            GameState.plantedTiles[tileKey] = {
-                type: plantType,
-                entity: plantEntity
-            };
 
-            console.log(`¡Planta ${plantType} plantada en ${tileKey}!`);
+            container.appendChild(plantEntity);
+            GameState.plantedTiles[tileKey] = { type: plantType, entity: plantEntity };
 
             if (plantType === 'sunflower') {
                 startSunflowerProduction(plantEntity, position);
             }
+            if (plantType === 'peashooter') {
+                plantEntity.setAttribute('peashooter-logic', '');
+                GameState.peashooters.push({ entity: plantEntity, position });
+            }
+            if (plantType === 'wallnut') {
+                GameState.wallnuts.push({ entity: plantEntity, position });
+            }
         }
 
-        // ========================================
+        // ============================================================
         // SISTEMA DE SOLES
-        // ========================================
-
+        // ============================================================
         function startSunflowerProduction(plantEntity, position) {
-            const sunflowerData = {
-                entity: plantEntity,
-                position: position,
-                lastSunTime: Date.now()
-            };
-
-            GameState.sunflowers.push(sunflowerData);
+            GameState.sunflowers.push({ entity: plantEntity, position, lastSunTime: Date.now() });
         }
 
         setInterval(() => {
-            GameState.sunflowers.forEach(sunflower => {
-                const now = Date.now();
-                if (now - sunflower.lastSunTime >= 15000) {
-                    spawnSun(sunflower.position);
-                    sunflower.lastSunTime = now;
+            if (!gameRunning) return;
+            GameState.sunflowers.forEach(sf => {
+                if (Date.now() - sf.lastSunTime >= 15000) {
+                    spawnSun(sf.position);
+                    sf.lastSunTime = Date.now();
                 }
             });
         }, 1000);
 
+        setInterval(() => {
+            if (!gameRunning) return;
+            spawnSun({ x: (Math.random() * 4) - 2, y: 0, z: -2 - (Math.random() * 15) });
+        }, 10000);
+
         function spawnSun(position) {
             const container = document.getElementById('suns-container');
             const sun = document.createElement('a-entity');
-            
             const sunX = position.x;
             const sunY = position.y + 2;
             const sunZ = position.z;
@@ -735,104 +838,50 @@
             sun.setAttribute('position', `${sunX} ${sunY} ${sunZ}`);
             sun.setAttribute('class', 'clickable');
             sun.setAttribute('sun-collectable', '');
-            
             sun.innerHTML = `
-                <a-sphere 
-                    radius="0.3" 
-                    color="#FFD700"
+                <a-sphere radius="0.3" color="#FFD700"
                     material="emissive: #FFD700; emissiveIntensity: 0.8"
                     shadow="cast: true"
                     animation="property: rotation; to: 0 360 0; loop: true; dur: 3000; easing: linear">
                 </a-sphere>
-                <a-sphere 
-                    radius="0.25" 
-                    color="#FFA500"
+                <a-sphere radius="0.25" color="#FFA500"
                     material="emissive: #FFA500; emissiveIntensity: 0.6">
                 </a-sphere>
             `;
-
             sun.setAttribute('animation__fall', {
                 property: 'position',
                 to: `${sunX} ${position.y + 0.5} ${sunZ}`,
-                dur: 1500,
-                easing: 'easeOutQuad'
+                dur: 1500, easing: 'easeOutQuad'
             });
-
             setTimeout(() => {
                 sun.setAttribute('animation__float', {
                     property: 'position',
                     from: `${sunX} ${position.y + 0.5} ${sunZ}`,
                     to: `${sunX} ${position.y + 0.7} ${sunZ}`,
-                    dur: 1000,
-                    dir: 'alternate',
-                    loop: true,
-                    easing: 'easeInOutSine'
+                    dur: 1000, dir: 'alternate', loop: true, easing: 'easeInOutSine'
                 });
             }, 1500);
 
             container.appendChild(sun);
-
-            setTimeout(() => {
-                if (sun.parentNode) {
-                    sun.parentNode.removeChild(sun);
-                }
-            }, 10000);
+            setTimeout(() => { if (sun.parentNode) sun.parentNode.removeChild(sun); }, 10000);
         }
 
         function collectSun(sunElement) {
-            if (!sunElement || !sunElement.parentNode) {
-                return;
-            }
-
-            // +50 SOLES
+            if (!sunElement || !sunElement.parentNode) return;
             GameState.sunPoints += 50;
             updateSunCounter();
-
-            sunElement.setAttribute('animation__collect', {
-                property: 'position.y',
-                to: 10,
-                dur: 500,
-                easing: 'easeInQuad'
-            });
-            sunElement.setAttribute('animation__fade', {
-                property: 'scale',
-                to: '0 0 0',
-                dur: 500,
-                easing: 'easeInQuad'
-            });
-
-            setTimeout(() => {
-                if (sunElement.parentNode) {
-                    sunElement.parentNode.removeChild(sunElement);
-                }
-            }, 500);
-
-            console.log('¡Sol recogido! +50 soles. Total: ' + GameState.sunPoints);
+            sunElement.setAttribute('animation__collect', { property: 'position.y', to: 10, dur: 500, easing: 'easeInQuad' });
+            sunElement.setAttribute('animation__fade', { property: 'scale', to: '0 0 0', dur: 500, easing: 'easeInQuad' });
+            setTimeout(() => { if (sunElement.parentNode) sunElement.parentNode.removeChild(sunElement); }, 500);
         }
 
-        // ========================================
-        // INICIALIZACIÓN
-        // ========================================
-
-        document.querySelector('a-scene').addEventListener('loaded', function () {
-            const tiles = document.querySelectorAll('.plant-tile');
-            tiles.forEach(tile => {
-                tile.setAttribute('plant-tile', '');
-            });
-
+        // ============================================================
+        // INICIALIZACIÓN DE TILES
+        // ============================================================
+        document.querySelector('a-scene').addEventListener('loaded', function() {
+            document.querySelectorAll('.plant-tile').forEach(tile => tile.setAttribute('plant-tile', ''));
             updateSunCounter();
-            console.log('¡Juego iniciado! Soles: ' + GameState.sunPoints);
-            
-            setTimeout(() => {
-                for (let i = 0; i < 3; i++) {
-                    setTimeout(() => {
-                        const randomX = Math.random() * 4 - 2;
-                        const randomZ = -2 - Math.random() * 15;
-                        spawnSun({ x: randomX, y: 0, z: randomZ });
-                    }, i * 2000);
-                }
-            }, 5000);
         });
-    </script>        
+    </script>
 </body>
 </html>
