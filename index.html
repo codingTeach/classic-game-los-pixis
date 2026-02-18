@@ -893,6 +893,23 @@
         function gameOver() {
             gameRunning = false;
             clearInterval(spawnInterval);
+            // Detener todos los efectos de sonido
+            const bgMusic = document.getElementById('bg-music');
+            if (bgMusic) { bgMusic.pause(); bgMusic.currentTime = 0; }
+            const sunSound = document.getElementById('sun-sound');
+            if (sunSound) { sunSound.pause(); sunSound.currentTime = 0; }
+            // Detener otros audios si tienes más
+            // Reproducir efecto de game over
+            let gameOverAudio = document.getElementById('gameover-sound');
+            if (!gameOverAudio) {
+                gameOverAudio = document.createElement('audio');
+                gameOverAudio.id = 'gameover-sound';
+                gameOverAudio.src = 'audio/game-over.mp3';
+                gameOverAudio.volume = 1.0;
+                document.body.appendChild(gameOverAudio);
+            }
+            gameOverAudio.currentTime = 0;
+            gameOverAudio.play();
             document.getElementById('game-ui').style.display = 'none';
             document.getElementById('instructions').style.display = 'none';
             document.getElementById('gameover-screen').style.display = 'flex';
