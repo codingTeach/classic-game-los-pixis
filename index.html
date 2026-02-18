@@ -64,20 +64,39 @@
             startEating: function(plantObj) {
                 this.isEating = true;
                 this.targetPlant = plantObj;
-                
-                // --- CAMBIO AQUÍ: TIEMPO REDUCIDO ---
-                // Antes era 5000, ahora 2000 (2 segundos)
+
+                // Si la planta tiene resistencia, restar un ciclo y solo destruir si llega a 0
+                if (plantObj && plantObj.entity && typeof plantObj.entity._plantHpCurrent === 'number') {
+                    plantObj.entity._plantHpCurrent--;
+                    if (plantObj.entity._plantHpCurrent > 0) {
+                        // No destruir aún, solo "morder" y esperar otro ciclo
+                        this.eatTimer = Date.now() + 2000;
+                        return;
+                    }
+                }
+                // Si no tiene resistencia especial, o ya se acabó, comer normalmente
                 this.eatTimer = Date.now() + 2000; 
 
-                // --- CAMBIO AQUÍ: QUITAMOS EL COLOR AMARILLO ---
-                // Eliminé la línea que cambiaba el color a #ffbb00
+                // --- CAMBIO AQUÍ: TIEMPO REDUCIDO ---
+                // Antes era 5000, ahora 2000 (2 segundos)
             },
 
             finishEating: function() {
                 if (this.targetPlant && this.targetPlant.entity && this.targetPlant.entity.parentNode) {
+                    // Si la planta tiene resistencia y aún le quedan "bocados", no la destruimos
+                    if (typeof this.targetPlant.entity._plantHpCurrent === 'number' && this.targetPlant.entity._plantHpCurrent > 0) {
+                        // Solo termina el ciclo de comer, pero la planta sigue
+                        this.isEating = false;
+                        this.targetPlant = null;
+                        if (this.eatSound && this.isPlayingEatSound) {
+                            this.eatSound.pause();
+                            this.eatSound.currentTime = 0;
+                            this.isPlayingEatSound = false;
+                        }
+                        return;
+                    }
                     const entityToRemove = this.targetPlant.entity;
                     entityToRemove.parentNode.removeChild(entityToRemove);
-
                     let tileKeyToDelete = null;
                     for (let key in GameState.plantedTiles) {
                         if (GameState.plantedTiles[key].entity === entityToRemove) {
@@ -86,12 +105,10 @@
                         }
                     }
                     if (tileKeyToDelete) delete GameState.plantedTiles[tileKeyToDelete];
-
                     GameState.sunflowers = GameState.sunflowers.filter(p => p.entity !== entityToRemove);
                     GameState.wallnuts = GameState.wallnuts.filter(p => p.entity !== entityToRemove);
                     GameState.peashooters = GameState.peashooters.filter(p => p.entity !== entityToRemove);
                 }
-
                 this.isEating = false;
                 this.targetPlant = null;
                 // Detener sonido de comer
@@ -997,7 +1014,7 @@
             }, 3000);
 
             if (spawnInterval) clearInterval(spawnInterval);
-            spawnInterval = setInterval(() => { if (gameRunning) spawnZombie(); }, 5000);
+            spawnInterval = setInterval(() => { if (gameRunning) spawnZombie(); }, 7000); // antes 5000
         }
 
         function gameOver() {
@@ -1067,6 +1084,8 @@
         // SPAWN DE ZOMBIES
         // ============================================================
         function spawnZombie() {
+            // Limitar a 5 zombies activos
+            if (GameState.activeZombies.length >= 5) return;
             const scene = document.querySelector('a-scene');
             const types    = ['zombie-normal', 'zombie-cono', 'zombie-cubeta'];
             const typeKeys = ['normal', 'cono', 'cubeta'];
@@ -1075,7 +1094,6 @@
 
             const original = document.querySelector('#' + types[idx]);
             if (!original) return;
-
             const clone = original.cloneNode(true);
             clone.removeAttribute('id');
             clone.setAttribute('visible', 'true');
@@ -1233,6 +1251,16 @@
             plantEntity.setAttribute('position', `${position.x} ${position.y} ${position.z}`);
             plantEntity.setAttribute('rotation', '0 180 0');
             plantEntity.innerHTML = PlantTemplates[plantType];
+
+            // --- Resistencia personalizada para wallnut ---
+            // Las plantas normales se comen en 1 ciclo (2 segundos), la wallnut debe aguantar 15 segundos (8 ciclos)
+            if (plantType === 'wallnut') {
+                plantEntity._plantHp = 8;
+                plantEntity._plantHpCurrent = 8;
+            } else {
+                plantEntity._plantHp = 1;
+                plantEntity._plantHpCurrent = 1;
+            }
 
             container.appendChild(plantEntity);
             GameState.plantedTiles[tileKey] = { type: plantType, entity: plantEntity };
