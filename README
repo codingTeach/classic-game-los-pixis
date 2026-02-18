@@ -1,1 +1,25 @@
-GAME
+# Plants vs Zombies VR
+
+una recreacion del clasico juego de **Plants vs Zombies** usando [A-frame]. Defiende tu casa plantando girasoles, lanzaguisantes y nueces para detener la invacion zombie.
+
+## Caracteristicas
+
+### Plantas disponibles
+- **Girasol** (50 soles): Genera soles cada 15 segundos para conseguir recursos.
+- **Lanzaguisantes+* (100 soles): Dispara proyectiles a los zombies en su carril.
+- **Nuez** (50 soles): Detiene a los zombis cercanos durante 30 segundos.
+
+### Tipos de Zombies
+-**Zombie normal**: 100 HP
+-**Zombie caracono**: 150 HP
+-**Zombie ncaracubo**: 250 HP
+
+### Mecanicas
+- Sistema de recursos basado en soles
+- Spawn automatico de zombis
+- Los zombis avanzan hacia la casa
+- Sistema de daño
+- Deteccion de colisiones 
+- Sistema de eliminacion (pala)
+- Game Over
+- Pantalla de inicio 
