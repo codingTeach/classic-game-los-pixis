@@ -2,6 +2,10 @@
 <html lang="en">
 <head>
     <script src="https://aframe.io/releases/1.0.0/aframe.min.js"></script>
+    <!-- SONIDO DE COMER PARA ZOMBIES -->
+    <audio id="eat-sound" src="audio/comer.mp3" preload="auto"></audio>
+    <!-- SONIDO DE DISPARO PARA PEASHOOTER -->
+    <audio id="shooter-sound" src="audio/shooter.mp3" preload="auto"></audio>
     <script>
         let score = 0;
         let gameRunning = false;
@@ -24,7 +28,10 @@
                 this.eatTimer = 0;           
                 this.targetPlant = null;     
 
-                this.el.addEventListener('click', () => this.takeDamage(999));
+                // Sonido de comer
+                this.eatSound = document.getElementById('eat-sound');
+                this.isPlayingEatSound = false;
+
             },
 
             takeDamage: function(dmg) {
@@ -87,6 +94,12 @@
 
                 this.isEating = false;
                 this.targetPlant = null;
+                // Detener sonido de comer
+                if (this.eatSound && this.isPlayingEatSound) {
+                    this.eatSound.pause();
+                    this.eatSound.currentTime = 0;
+                    this.isPlayingEatSound = false;
+                }
                 
                 // --- CAMBIO AQUÍ: YA NO NECESITAMOS RESTAURAR COLOR ---
                 // Porque nunca lo cambiamos a amarillo al empezar a comer.
@@ -96,6 +109,13 @@
                 if (!gameRunning) return;
 
                 if (this.isEating) {
+                    // Iniciar sonido de comer si no está sonando
+                    if (this.eatSound && !this.isPlayingEatSound) {
+                        this.eatSound.currentTime = 0;
+                        this.eatSound.loop = true;
+                        this.eatSound.play();
+                        this.isPlayingEatSound = true;
+                    }
                     if (!this.targetPlant || !this.targetPlant.entity || !this.targetPlant.entity.parentNode) {
                         this.finishEating(); 
                         return;
@@ -110,6 +130,13 @@
                         this.finishEating(); 
                     }
                     return; 
+                } else {
+                    // Si no está comiendo, asegurarse de que el sonido esté detenido
+                    if (this.eatSound && this.isPlayingEatSound) {
+                        this.eatSound.pause();
+                        this.eatSound.currentTime = 0;
+                        this.isPlayingEatSound = false;
+                    }
                 }
 
                 let pos = this.el.getAttribute('position');
@@ -175,6 +202,14 @@
         // Ya no vuela en dirección -Z fija; se mueve hacia donde esté el zombie
         // en cada tick, para alcanzarlo sin importar si está delante o detrás.
         function shootPea(fromPos, targetData) {
+
+            // Reproducir sonido de disparo
+            const shooterSound = document.getElementById('shooter-sound');
+            if (shooterSound) {
+                shooterSound.currentTime = 0;
+                shooterSound.play();
+            }
+
             const container = document.getElementById('projectiles-container');
             if (!container) return;
 
@@ -518,7 +553,7 @@
     </div>
 
     <div id="instructions">
-        Haz clic en una planta del menú, luego haz clic en un cuadro VERDE para plantarla. Haz clic en los SOLES para recogerlos. Usa la 🛠️ Pala para quitar plantas.
+        Nivel 1
     </div>
 
     <div id="nut-alert">🥜 ¡Nuez bloqueando zombis! 30 seg</div>
